@@ -1,6 +1,8 @@
 <?php
 /**
- * Sincronización profesional Flashpost - funcional al 100%
+ * Sincronización profesional Flashpost compatible PHP 7.3
+ * 
+ * Importa colecciones, requests y variables desde otro repo sin eliminar tus datos locales.
  */
 
 function syncFlashpost($repoPath)
@@ -58,20 +60,28 @@ function mergeCollections($localPath, $repoPath)
             if ($localCollection['name'] === $repoCollection['name']) {
                 $found = true;
 
+                // IDs existentes
                 $existingIds = [];
                 foreach ($localCollection['data'] as $item) {
                     $existingIds[$item['id']] = $item['$loki'] ?? 0;
                 }
 
-                $maxLoki = !empty($localCollection['data'])
-                    ? max(array_map(fn($i) => $i['$loki'] ?? 0, $localCollection['data']))
-                    : 0;
+                // maxLoki local
+                $maxLoki = 0;
+                if (!empty($localCollection['data'])) {
+                    foreach ($localCollection['data'] as $item) {
+                        if (isset($item['$loki']) && $item['$loki'] > $maxLoki) {
+                            $maxLoki = $item['$loki'];
+                        }
+                    }
+                }
 
+                // recorrer nodos del repo
                 foreach ($repoCollection['data'] as $repoItem) {
                     if (!isset($existingIds[$repoItem['id']])) {
                         $maxLoki++;
 
-                        // 🚨 Nodo reconstruido con toda la info de `data`
+                        // 🚨 Nodo reconstruido con toda la info de `data` del repo
                         $nodeData = $repoItem['data'] ?? [];
                         $nodeData['treeNodeType'] = $repoItem['droppable'] ? 'collection' : 'request';
 
@@ -91,7 +101,10 @@ function mergeCollections($localPath, $repoPath)
                 }
 
                 // reconstruir idIndex
-                $localCollection['idIndex'] = array_map(fn($i) => $i['$loki'], $localCollection['data']);
+                $localCollection['idIndex'] = [];
+                foreach ($localCollection['data'] as $i) {
+                    $localCollection['idIndex'][] = $i['$loki'];
+                }
 
                 // marcar binaryIndices como dirty
                 if (isset($localCollection['binaryIndices'])) {
@@ -127,14 +140,22 @@ function mergeLokiDb($localPath, $repoPath)
     foreach ($repo['collections'] as $repoCollection) {
         foreach ($local['collections'] as &$localCollection) {
             if ($localCollection['name'] === $repoCollection['name']) {
+
+                // IDs existentes
                 $existingIds = [];
                 foreach ($localCollection['data'] as $item) {
                     $existingIds[$item['id']] = true;
                 }
 
-                $maxLoki = !empty($localCollection['data'])
-                    ? max(array_column($localCollection['data'], '$loki'))
-                    : 0;
+                // maxLoki local
+                $maxLoki = 0;
+                if (!empty($localCollection['data'])) {
+                    foreach ($localCollection['data'] as $item) {
+                        if (isset($item['$loki']) && $item['$loki'] > $maxLoki) {
+                            $maxLoki = $item['$loki'];
+                        }
+                    }
+                }
 
                 foreach ($repoCollection['data'] as $repoItem) {
                     if (!isset($existingIds[$repoItem['id']])) {
@@ -145,8 +166,13 @@ function mergeLokiDb($localPath, $repoPath)
                     }
                 }
 
-                $localCollection['idIndex'] = array_map(fn($i) => $i['$loki'], $localCollection['data']);
+                // reconstruir idIndex
+                $localCollection['idIndex'] = [];
+                foreach ($localCollection['data'] as $i) {
+                    $localCollection['idIndex'][] = $i['$loki'];
+                }
 
+                // marcar binaryIndices como dirty
                 if (isset($localCollection['binaryIndices'])) {
                     foreach ($localCollection['binaryIndices'] as &$index) {
                         $index['dirty'] = true;
