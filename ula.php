@@ -40,7 +40,7 @@ function syncFlashpost($basePath)
             echo "✖ Error sincronizando $file\n";
         }
     }
-
+ 
     echo "Sincronización finalizada ✅\n";
     return true;
 }
