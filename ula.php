@@ -177,7 +177,7 @@ function syncCollectionNodes($localPath, $repoPath)
         }
     }
 
-    $local['collections'][0]['idIndex'] = array_map(fn($i) => $i['$loki'], $localCollection);
+    $local['collections'][0]['idIndex'] = array_map(function ($i) { return $i['$loki']; }, $localCollection);
     $local['collections'][0]['maxId']   = max(array_column($localCollection, '$loki'));
 
     // Reconstruir binaryIndices.id.values
