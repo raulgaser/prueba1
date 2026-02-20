@@ -1,7 +1,6 @@
 <?php
 /**
- * Sincronización profesional de Flashpost (version “multiusuario”)
- * Compatible con requests de otro usuario, mantiene todas las requests locales
+ * Sincronización profesional Flashpost - funcional al 100%
  */
 
 function syncFlashpost($repoPath)
@@ -10,7 +9,7 @@ function syncFlashpost($repoPath)
     $flashpostPath = $userHome . '/Documents/Flashpost';
 
     if (!is_dir($flashpostPath)) {
-        echo "Flashpost no está instalado en este usuario.\n";
+        echo "Flashpost no instalado.\n";
         return false;
     }
 
@@ -24,13 +23,8 @@ function syncFlashpost($repoPath)
         $localPath = $flashpostPath . DIRECTORY_SEPARATOR . $file;
         $repoFile  = $repoPath . DIRECTORY_SEPARATOR . $file;
 
-        if (!file_exists($localPath)) {
-            echo "⚠ Archivo local no encontrado: $file\n";
-            continue;
-        }
-
-        if (!file_exists($repoFile)) {
-            echo "⚠ Archivo repo no encontrado: $file\n";
+        if (!file_exists($localPath) || !file_exists($repoFile)) {
+            echo "⚠ Saltando $file (archivo faltante)\n";
             continue;
         }
 
@@ -47,11 +41,8 @@ function syncFlashpost($repoPath)
     return true;
 }
 
-
 /**
- * Merge de colecciones
- * - Carpeta: copia tal cual
- * - Request: solo id y treeNodeType
+ * Merge collections y requests
  */
 function mergeCollections($localPath, $repoPath)
 {
@@ -61,56 +52,70 @@ function mergeCollections($localPath, $repoPath)
     copy($localPath, $localPath . '.backup');
 
     foreach ($repo['collections'] as $repoCollection) {
-
         $found = false;
+
         foreach ($local['collections'] as &$localCollection) {
             if ($localCollection['name'] === $repoCollection['name']) {
                 $found = true;
 
                 $existingIds = [];
                 foreach ($localCollection['data'] as $item) {
-                    $existingIds[$item['id']] = true;
+                    $existingIds[$item['id']] = $item['$loki'] ?? 0;
                 }
+
+                $maxLoki = !empty($localCollection['data'])
+                    ? max(array_map(fn($i) => $i['$loki'] ?? 0, $localCollection['data']))
+                    : 0;
 
                 foreach ($repoCollection['data'] as $repoItem) {
                     if (!isset($existingIds[$repoItem['id']])) {
-                        if (!empty($repoItem['droppable'])) {
-                            // Carpeta o colección
-                            $localCollection['data'][] = $repoItem;
-                        } else {
-                            // Request: solo id y treeNodeType
-                            $localCollection['data'][] = [
-                                "id" => $repoItem['id'],
-                                "parent" => $repoItem['parent'] ?? "",
-                                "text" => $repoItem['text'] ?? "",
-                                "createdTime" => $repoItem['createdTime'] ?? date("d-M-Y H:i:s"),
-                                "droppable" => false,
-                                "data" => [
-                                    "treeNodeType" => "request",
-                                    "id" => $repoItem['id']
-                                ]
-                            ];
-                        }
+                        $maxLoki++;
+
+                        // 🚨 Nodo reconstruido con toda la info de `data`
+                        $nodeData = $repoItem['data'] ?? [];
+                        $nodeData['treeNodeType'] = $repoItem['droppable'] ? 'collection' : 'request';
+
+                        $localCollection['data'][] = [
+                            'id' => $repoItem['id'],
+                            'parent' => $repoItem['parent'] ?? '',
+                            'text' => $repoItem['text'] ?? '',
+                            'createdTime' => $repoItem['createdTime'] ?? date("d-M-Y H:i:s"),
+                            'droppable' => $repoItem['droppable'] ?? false,
+                            'data' => $nodeData,
+                            '$loki' => $maxLoki
+                        ];
+
+                        $type = ($repoItem['droppable'] ?? false) ? 'Carpeta' : 'Request';
+                        echo "📌 $type agregada: {$repoItem['text']} (nuevo \$loki={$maxLoki})\n";
                     }
                 }
+
+                // reconstruir idIndex
+                $localCollection['idIndex'] = array_map(fn($i) => $i['$loki'], $localCollection['data']);
+
+                // marcar binaryIndices como dirty
+                if (isset($localCollection['binaryIndices'])) {
+                    foreach ($localCollection['binaryIndices'] as &$index) {
+                        $index['dirty'] = true;
+                    }
+                }
+
                 break;
             }
         }
 
         if (!$found) {
-            // La colección completa no existía localmente
+            // colección completa nueva
             $local['collections'][] = $repoCollection;
+            echo "🆕 Colección completa agregada: {$repoCollection['name']}\n";
         }
     }
 
     file_put_contents($localPath, json_encode($local, JSON_PRETTY_PRINT));
 }
 
-
 /**
- * Merge de bases LokiJS (flashpost.db / flashpostVariable.db)
- * - Genera $loki único localmente
- * - Actualiza idIndex
+ * Merge LokiDB (flashpost.db o flashpostVariable.db)
  */
 function mergeLokiDb($localPath, $repoPath)
 {
@@ -120,16 +125,11 @@ function mergeLokiDb($localPath, $repoPath)
     copy($localPath, $localPath . '.backup');
 
     foreach ($repo['collections'] as $repoCollection) {
-
         foreach ($local['collections'] as &$localCollection) {
-
             if ($localCollection['name'] === $repoCollection['name']) {
-
                 $existingIds = [];
                 foreach ($localCollection['data'] as $item) {
-                    if (isset($item['id'])) {
-                        $existingIds[$item['id']] = true;
-                    }
+                    $existingIds[$item['id']] = true;
                 }
 
                 $maxLoki = !empty($localCollection['data'])
@@ -137,20 +137,16 @@ function mergeLokiDb($localPath, $repoPath)
                     : 0;
 
                 foreach ($repoCollection['data'] as $repoItem) {
-
                     if (!isset($existingIds[$repoItem['id']])) {
                         $maxLoki++;
                         $repoItem['$loki'] = $maxLoki;
                         $localCollection['data'][] = $repoItem;
+                        echo "📥 Request/Variable importada: {$repoItem['id']} (nuevo \$loki={$maxLoki})\n";
                     }
                 }
 
-                // Reconstruir idIndex con todos los $loki
-                $localCollection['idIndex'] = array_map(function ($item) {
-                    return $item['$loki'];
-                }, $localCollection['data']);
+                $localCollection['idIndex'] = array_map(fn($i) => $i['$loki'], $localCollection['data']);
 
-                // Marcar binaryIndices como dirty
                 if (isset($localCollection['binaryIndices'])) {
                     foreach ($localCollection['binaryIndices'] as &$index) {
                         $index['dirty'] = true;
@@ -165,5 +161,5 @@ function mergeLokiDb($localPath, $repoPath)
     file_put_contents($localPath, json_encode($local, JSON_PRETTY_PRINT));
 }
 
-// Ejemplo de uso
+// === USO ===
 // syncFlashpost('C:/ruta/al/repo');
